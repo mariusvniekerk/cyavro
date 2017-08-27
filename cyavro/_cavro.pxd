@@ -31,8 +31,7 @@ from libc.stdint cimport int32_t, int64_t
 from libc.stdlib cimport *
 from libc.stdio cimport *
 
-
-cdef extern from 'avro.h':
+cdef extern from 'avro.h' nogil:
     #'basics.h':
     cdef enum avro_type_t:
         AVRO_STRING,
@@ -58,8 +57,8 @@ cdef extern from 'avro.h':
     ctypedef avro_class_t avro_class_t
 
     #'schema.h':
-    struct avro_obj_t:
-        pass
+    cdef struct avro_obj_t:
+        avro_type_t type
     ctypedef avro_obj_t *avro_schema_t
 
     struct avro_schema_error_t_:
@@ -69,6 +68,7 @@ cdef extern from 'avro.h':
     int avro_schema_from_json(const char *jsontext, int32_t unused1,
               avro_schema_t *schema, avro_schema_error_t *unused2)
 
+    size_t avro_schema_record_size(const avro_schema_t record)
     const char *avro_schema_record_field_name(const avro_schema_t schema, int index)
     avro_schema_t avro_schema_record_field_get_by_index(const avro_schema_t record, int index)
 

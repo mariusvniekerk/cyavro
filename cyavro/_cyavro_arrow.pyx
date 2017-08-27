@@ -43,17 +43,20 @@ from libc.stdlib cimport malloc, free
 import numpy as np
 cimport numpy as np
 
-import pyarrow as pa
-cimport pyarrow as pa
+import pyarrow
+cimport pyarrow
+import pyarrow.lib
+cimport pyarrow.lib
 
 from libc.stdint cimport int32_t, int64_t
-from _cavro cimport *
-from _cyavro_arrow cimport *
+from ._cyavro import *
+from ._cavro cimport *
+from ._cyavro_arrow cimport *
 from six import string_types, binary_type, iteritems
 from libc.string cimport memcpy
 
 # from posix.stdio cimport *  # New on cython, not yet released
-from posixstdio cimport *
+from .posixstdio cimport *
 
 # Globals
 cdef int64_t PANDAS_NaT = np.datetime64('nat').astype('int64') # Not a time from pandas
@@ -91,8 +94,6 @@ cdef class AvroArrowReader(object):
     >>> rd.close()
 
     """
-    cdef pa.DataType arrow_schema
-
     def __cinit__(self):
         self._reader = NULL
         self.fp_reader_buffer = NULL
@@ -240,59 +241,11 @@ cdef class AvroArrowReader(object):
         if wschema.type != AVRO_RECORD:
             raise Exception('Non-record types are not supported.')
 
-        cdef pa.DataType get_elem_type(avro_schema_t schema):
-            # primitives
-            cdef:
-                avro_schema_t child
-                size_t size, idx
-                int64_t length
-                str name
 
-            avro_type = schema.type
-            if avro_type == AVRO_INT32:
-                return pa.int32()
-            elif avro_type == AVRO_INT64:
-                return pa.int64()
-            elif avro_type == AVRO_FLOAT:
-                return pa.float32()
-            elif avro_type == AVRO_DOUBLE:
-                return pa.float64()
-            elif avro_type in AVRO_BOOLEAN:
-                return pa.bool_()
-            elif avro_type in AVRO_STRING:
-                return pa.string()
-            elif avro_type in  AVRO_BYTES:
-                return pa.binary()
-            elif avro_type in AVRO_FIXED:
-                length = avro_schema_fixed_size(avro_type)
-                return pa.binary(length)
-            elif avro_type in AVRO_ARRAY:
-                elem_type = get_elem_type(avro_schema_array_items(schema))
-                return pa.list_(elem_type)
-            elif avro_type in AVRO_MAP:
-                value_type = get_elem_type(avro_schema_map_values(schema))
-                raise NotImplementedError("Arrow doesn't do maps yet")
-            elif avro_type in AVRO_UNION:
-                size = avro_schema_union_size(schema)
-                arrow_types = []
-                for idx in range(size):
-                    child = avro_schema_union_branch(schema, idx)
-                    arrow_types.append(get_elem_type(child))
-                raise NotImplementedError("Arrow doesn't do unions yet")
-            elif avro_type in AVRO_RECORD:
-                size = avro_schema_record_size(schema)
-                arrow_fields = list()
-                for idx in range(size):
-                    child = avro_schema_record_field_get_by_index(schema, idx)
-                    elem_type = get_elem_type(child)
-                    name = avro_schema_record_field_name(schema, idx)
-                    pa.field(name, elem_type)
-                pa.struct(arrow_fields)
-            else:
-                raise Exception('Unexpected type ({})'.format(avro_type))
-
-        arrow_schema = get_elem_type(wschema)
+        arrow_schema = get_arrow_type(wschema)
         self.arrow_schema = arrow_schema
+
+
 
     def read_chunk(self):
         """Reads a chunk of records from the avro file.
@@ -325,7 +278,8 @@ cdef class AvroArrowReader(object):
             avro_value_t record
 
         cdef unique_ptr[CArrayBuilder] builder
-        MakeBuilder(memory_pool, self.arrow_schema.sp_type, &builder)
+        cdef CMemoryPool* pool = c_get_memory_pool()
+        MakeBuilder(pool, self.arrow_schema.sp_type, &builder)
 
         # Get avro reader schema from the file
         wschema = avro_file_reader_get_writer_schema(filereader)
@@ -337,7 +291,7 @@ cdef class AvroArrowReader(object):
             if rval != 0:
                 break
             # decompose record into Python types
-            read_record(record, builder)
+            read_record(record, deref(builder))
             avro_value_reset(&record)
             counter += 1
             if counter == self.chunk_size:
@@ -345,25 +299,11 @@ cdef class AvroArrowReader(object):
 
         # builder finish
         cdef shared_ptr[CArray] out;
-        deref(builder).Finish(&out)
-
-        pa.StructArray()
-
-        # set sizing for output buffers
-        out = dict()
-        for name, avro_type, array in zip(self.field_names, self.field_types, self.refholder):
-            #print((name, avro_type, type(array)))
-            if avro_type == AVRO_BOOLEAN:
-                out[name] = array[:counter].astype('bool')
-            else:
-                out[name] = array[:counter]
-
-        # Reference count cleanup
-        avro_value_decref(&record)
-        avro_value_iface_decref(iface)
-        avro_schema_decref(wschema)
-
-        return out
+        deref(builder).Finish(out)
+        cdef pyarrow.lib.Array result
+        result = pyarrow.lib.StructArray()
+        result.init(out)
+        return result
 
 
 cdef arrow_reader_from_bytes_c(void *buffer, int length):
@@ -408,7 +348,7 @@ cdef CStatus read_record(const avro_value_t val, CArrayBuilder builder):
         avro_value_get_by_index(&val, i, &child, NULL)
         avro_type = avro_value_get_type(&child)
         child_builder = builder.child(i)
-        result = generic_read(child, child_builder)
+        result = generic_read(child, deref(child_builder))
     return result
 
 # Primitive read functions.  These all take the same basic form
@@ -418,83 +358,85 @@ cdef CStatus read_record(const avro_value_t val, CArrayBuilder builder):
 # * assign that read value to the subcontainer if present
 # * return the value.
 
-cdef CStatus read_string(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_string(const avro_value_t val, CArrayBuilder builder):
     cdef:
         size_t strlen
-        const char* c_string = NULL
+        const char* c_str = NULL
         list l
-    avro_value_get_string(&val, &c_string, &strlen)
-    return (<CStringBuilder> builder).Append(&c_string, strlen)
+    avro_value_get_string(&val, &c_str, &strlen)
+    cdef CStringBuilder tbuilder = (<CStringBuilder> builder)
+    return tbuilder.Append(<c_string>c_str)
 
 
-cdef CStatus read_bytes(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_bytes(const avro_value_t val, CArrayBuilder builder):
     cdef:
         size_t strlen
-        const char* c_string = NULL
-        list l
-        bytes py_bytes
-    avro_value_get_bytes(&val, <void**> &c_string, &strlen)
-    return (<CBinaryBuilder> builder).Append(&c_string, strlen)
-
-
-cdef CStatus read_fixed(const avro_value_t val, CArrayBuilder builder) nogil:
-    cdef:
-        size_t strlen
-        const char* c_string = NULL
+        const char* c_str = NULL
         list l
         bytes py_bytes
-    avro_value_get_fixed(&val,  <void**> &c_string, &strlen)
-    return (<CFixedSizeBinaryBuilder> builder).Append(&c_string, strlen)
+    avro_value_get_bytes(&val, <void**> &c_str, &strlen)
+    return (<CBinaryBuilder> builder).Append(<c_string> c_str)
+
+
+cdef CStatus read_fixed(const avro_value_t val, CArrayBuilder builder):
+    cdef:
+        size_t strlen
+        const char* c_str = NULL
+        list l
+        bytes py_bytes
+    avro_value_get_fixed(&val,  <void**> &c_str, &strlen)
+    cdef CFixedSizeBinaryBuilder tbuilder = (<CFixedSizeBinaryBuilder> builder)
+    return tbuilder.Append(c_str, strlen)
 
 
 # numpy primitive read functions.  These all write to ndarrays.
 
-cdef CStatus read_int32(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_int32(const avro_value_t val, CArrayBuilder builder):
     cdef int32_t out
     avro_value_get_int(&val, &out)
     return (<CInt32Builder> builder).Append(out)
 
 
-cdef CStatus read_int64(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_int64(const avro_value_t val, CArrayBuilder builder):
     cdef int64_t out
     avro_value_get_long(&val, &out)
     return (<CInt64Builder> builder).Append(out)
 
 
-cdef CStatus read_float64(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_float64(const avro_value_t val, CArrayBuilder builder):
     cdef double out
     avro_value_get_double(&val, &out)
     return (<CDoubleBuilder> builder).Append(out)
 
 
-cdef CStatus read_float32(avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_float32(avro_value_t val, CArrayBuilder builder):
     cdef float out
     avro_value_get_float(&val, &out)
     return (<CFloatBuilder> builder).Append(out)
 
 
-cdef CStatus read_bool(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_bool(const avro_value_t val, CArrayBuilder builder):
     cdef int32_t out
     cdef int temp
     avro_value_get_boolean(&val, &temp)
     return (<CBooleanBuilder> builder).Append(out)
 
 
-cdef CStatus read_enum(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_enum(const avro_value_t val, CArrayBuilder builder):
     # TODO
     cdef int32_t out
     cdef int temp
     avro_value_get_enum(&val, &temp)
     out = temp
-    return (CInt32Builder).Append(out)
+    return CStatus_Invalid()
 
 
-cdef CStatus read_null(const avro_value_t val, CArrayBuilder builder) nogil:
-    return (<CNullBuilder> builder).AppendNull
+cdef CStatus read_null(const avro_value_t val, CArrayBuilder builder):
+    return (<CNullBuilder> builder).AppendNull()
 
 # Read methods for union types.
 
-cdef CStatus read_union(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_union(const avro_value_t val, CArrayBuilder builder):
     """Unions are only supported for [null, something types]"""
     cdef avro_value_t child
     avro_value_get_current_branch(&val, &child)
@@ -512,37 +454,33 @@ cdef CStatus read_union(const avro_value_t val, CArrayBuilder builder) nogil:
 # * assign that read value to the container
 # * return the container.
 
-cdef CStatus read_map(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_map(const avro_value_t val, CArrayBuilder builder):
     """For map types the value of an avro_value_t is similar to a record.
 
     These are fetched one at a time since maps are stored as an ordered list of values.
     """
-
-    out  = {}
-    if subcontainer is not None:
-        subcontainer[row] = out
-    cdef size_t actual_size
-    cdef size_t i
+    # TODO
+    cdef:
+        size_t actual_size, i
+        avro_type_t avro_type
     avro_value_get_size(&val, &actual_size)
-    cdef avro_type_t avro_type
 
     for i in range(actual_size):
-        key, value = read_map_elem(val, i)
-        out[key] = value
+        read_map_elem(val, i)
 
-    return out
+    return CStatus_Invalid()
 
 
-cdef read_map_elem(const avro_value_t val, size_t i):
+cdef CStatus read_map_elem(const avro_value_t val, size_t i):
     cdef const char* map_key = NULL
     cdef avro_value_t child
     avro_value_get_by_index(&val, i, &child, &map_key)
-    key = map_key.decode('utf8')
-    retval = generic_read(child)
-    return key, retval
+    #key = map_key.decode('utf8')
+    #retval = generic_read(child)
+    return CStatus_Invalid()
 
 
-cdef CStatus read_array(const avro_value_t val, CArrayBuilder builder) nogil:
+cdef CStatus read_array(const avro_value_t val, CArrayBuilder builder):
     cdef:
         size_t actual_size
         size_t i
@@ -557,7 +495,7 @@ cdef CStatus read_array(const avro_value_t val, CArrayBuilder builder) nogil:
     child_builder = builder.child(0)
     for i in range(actual_size):
         avro_value_get_by_index(&val, i,  &child, &map_key)
-        result = generic_read(child, &child_builder)
+        result = generic_read(child, deref(child_builder))
 
     return result
 
@@ -599,3 +537,53 @@ cdef CStatus generic_read(const avro_value_t val, CArrayBuilder builder):
     else:
         raise Exception('Unexpected type ({})'.format(avro_type))
 
+cdef pyarrow.lib.DataType get_arrow_type(avro_schema_t schema):
+    # primitives
+    cdef:
+        avro_schema_t child
+        size_t size, idx
+        int64_t length
+        char * name
+
+    avro_type = schema.type
+    if avro_type == AVRO_INT32:
+        return pyarrow.int32()
+    elif avro_type == AVRO_INT64:
+        return pyarrow.int64()
+    elif avro_type == AVRO_FLOAT:
+        return pyarrow.float32()
+    elif avro_type == AVRO_DOUBLE:
+        return pyarrow.float64()
+    elif avro_type in AVRO_BOOLEAN:
+        return pyarrow.bool_()
+    elif avro_type in AVRO_STRING:
+        return pyarrow.string()
+    elif avro_type in  AVRO_BYTES:
+        return pyarrow.binary()
+    elif avro_type in AVRO_FIXED:
+        length = avro_schema_fixed_size(schema)
+        return pyarrow.binary(length)
+    elif avro_type in AVRO_ARRAY:
+        elem_type = get_arrow_type(avro_schema_array_items(schema))
+        return pyarrow.list_(elem_type)
+    elif avro_type in AVRO_MAP:
+        value_type = get_arrow_type(avro_schema_map_values(schema))
+        raise NotImplementedError("Arrow doesn't do maps yet")
+    elif avro_type in AVRO_UNION:
+        size = avro_schema_union_size(schema)
+        arrow_types = []
+        for idx in range(size):
+            child = avro_schema_union_branch(schema, idx)
+            arrow_types.append(get_arrow_type(child))
+        raise NotImplementedError("Arrow doesn't do unions yet")
+    elif avro_type in AVRO_RECORD:
+        size = avro_schema_record_size(schema)
+        arrow_fields = list()
+        for idx in range(size):
+            child = avro_schema_record_field_get_by_index(schema, idx)
+            elem_type = get_arrow_type(child)
+            name = avro_schema_record_field_name(schema, idx)
+            pyarrow.field(name, elem_type)
+        pyarrow.struct(arrow_fields)
+    else:
+        raise Exception('Unexpected type ({})'.format(avro_type))

@@ -47,12 +47,12 @@ import pyarrow as pa
 cimport pyarrow as pa
 
 from libc.stdint cimport int32_t, int64_t
-from _cavro cimport *
+from ._cavro cimport *
 from six import string_types, binary_type, iteritems
 from libc.string cimport memcpy
 
 # from posix.stdio cimport *  # New on cython, not yet released
-from posixstdio cimport *
+from .posixstdio cimport *
 
 # Globals
 cdef int64_t PANDAS_NaT = np.datetime64('nat').astype('int64') # Not a time from pandas

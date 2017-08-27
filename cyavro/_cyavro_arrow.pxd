@@ -1,8 +1,28 @@
-
+from __future__ import absolute_import
 from pyarrow.includes.libarrow cimport *
+from pyarrow.lib cimport DataType
+
+from ._cavro cimport avro_file_reader_t
+from ._cyavro cimport AvroReaderType
+
+cdef class AvroArrowReader:
+    cdef DataType arrow_schema
+    cdef avro_file_reader_t _reader
+    cdef public int chunk_size
+    cdef public list refholder, field_names, field_types, buffer_lst
+    cdef public str filename
+    cdef int initialized, empty_file, _should_free_buffer
+    cdef void *fp_reader_buffer
+    cdef int fp_reader_buffer_length
+    cdef public bytes filedata
+    cdef int filedatalength
+    cdef AvroReaderType reader_type
+    cdef init_reader_buffer(self)
+    cdef init_file_reader(self)
+    cdef init_memory_reader(self)
 
 
-cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider" nogil:
+cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
 
     cdef cppclass CArrayBuilder" arrow::ArrayBuilder":
 
@@ -36,7 +56,7 @@ cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider" nogil:
     cdef cppclass CBooleanBuilder" arrow::BooleanBuilder"(CArrayBuilder):
         CStatus AppendNull()
         CStatus Append(const c_bool)
-        CStatus Append(const uint_8)
+        CStatus Append(const uint8_t)
 
     cdef cppclass CInt32Builder" arrow::Int32Builder"(CArrayBuilder):
         CStatus AppendNull()

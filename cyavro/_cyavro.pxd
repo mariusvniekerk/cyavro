@@ -1,5 +1,5 @@
 from __future__ import absolute_import
-from _cavro cimport *
+from ._cavro cimport *
 
 cdef enum AvroReaderType:
     avro_reader_type_unset,
@@ -23,7 +23,5 @@ cdef class AvroReader:
     cdef init_file_reader(self)
 
     cdef init_memory_reader(self)
-
-
 
 cdef reader_from_bytes_c(void *buffer, int length)
