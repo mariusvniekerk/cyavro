@@ -62,16 +62,26 @@ cdef extern from 'avro.h':
         pass
     ctypedef avro_obj_t *avro_schema_t
 
-    size_t avro_schema_union_size(const avro_schema_t union_schema)
-
-    int avro_schema_decref(avro_schema_t schema)
-
     struct avro_schema_error_t_:
         pass
     ctypedef avro_schema_error_t_ *avro_schema_error_t
 
     int avro_schema_from_json(const char *jsontext, int32_t unused1,
               avro_schema_t *schema, avro_schema_error_t *unused2)
+
+    const char *avro_schema_record_field_name(const avro_schema_t schema, int index)
+    avro_schema_t avro_schema_record_field_get_by_index(const avro_schema_t record, int index)
+
+    int64_t avro_schema_fixed_size(const avro_schema_t fixed)
+    avro_schema_t avro_schema_array_items(avro_schema_t array)
+    avro_schema_t avro_schema_map_values(avro_schema_t map)
+
+    size_t avro_schema_union_size(const avro_schema_t union_schema)
+    avro_schema_t avro_schema_union_branch(avro_schema_t union_schema, int branch_index);
+
+
+    avro_schema_t avro_schema_incref(avro_schema_t schema);
+    int avro_schema_decref(avro_schema_t schema)
 
     #'value.h':
     struct avro_value_iface:

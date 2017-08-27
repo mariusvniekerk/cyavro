@@ -25,6 +25,7 @@
 """
 Cython helper for `from_bytes_c.py`
 """
+from __future__ import absolute_import
 from libc.stdlib cimport malloc, free
 from libc.stdio cimport *
 from libc.string cimport memcpy

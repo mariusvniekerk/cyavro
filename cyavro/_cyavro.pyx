@@ -36,11 +36,16 @@ Profile is enabled by default for easier debugging of the code with gdb.
 embedsignature allows docstrings to propogate to Python.
 """
 
+from __future__ import absolute_import
 from cython.view cimport array as cvarray
 from cython.operator cimport dereference as deref
 from libc.stdlib cimport malloc, free
 import numpy as np
 cimport numpy as np
+
+import pyarrow as pa
+cimport pyarrow as pa
+
 from libc.stdint cimport int32_t, int64_t
 from _cavro cimport *
 from six import string_types, binary_type, iteritems

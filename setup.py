@@ -60,14 +60,21 @@ extensions = [
         sources=['cyavro/_cyavro.pyx'],
         include_dirs=include_dirs,
         library_dirs=library_dirs,
-        libraries=['avro', 'm', 'snappy'],
+        libraries=['avro', 'm', 'snappy', 'arrow'],
+    ),
+    Extension(
+        name='cyavro._cyavro_arrow',
+        sources=['cyavro/_cyavro_arrow.pyx'],
+        include_dirs=include_dirs,
+        library_dirs=library_dirs,
+        libraries=['avro', 'm', 'snappy', 'arrow'],
     ),
     Extension(
         name='cyavro.test_utils',
         sources=['cyavro/test_utils.pyx'],
         include_dirs=include_dirs,
         library_dirs=library_dirs,
-        libraries=['avro', 'm', 'snappy'],
+        libraries=['avro', 'm', 'snappy', 'arrow'],
     )
 ]
 
