@@ -22,7 +22,7 @@ cdef class AvroArrowReader:
     cdef init_memory_reader(self)
 
 
-cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
+cdef extern from "arrow/builder.h" namespace "arrow":
 
     cdef cppclass CArrayBuilder" arrow::ArrayBuilder":
 
@@ -48,7 +48,7 @@ cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
         CStatus Resize(int64_t capacity)
         CStatus Reserve(int64_t capacity)
 
-        CStatus Finish(shared_ptr[CArray])
+        CStatus Finish(shared_ptr[CArray]* )
 
         shared_ptr[CDataType] type()
 
@@ -108,5 +108,18 @@ cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
         CStatus AppendNull()
         CStatus Append(c_bool isvalid)
 
-    cdef MakeBuilder( CMemoryPool* pool, shared_ptr[CDataType]& type, unique_ptr[CArrayBuilder]* out);
+    cdef CStatus MakeBuilder( CMemoryPool* pool, shared_ptr[CDataType]& type, unique_ptr[CArrayBuilder]* out);
 
+
+ctypedef CNullBuilder * CPNullBuilder
+ctypedef CBinaryBuilder * CPBinaryBuilder
+ctypedef CStringBuilder * CPStringBuilder
+ctypedef CFixedSizeBinaryBuilder * CPFixedSizeBinaryBuilder
+ctypedef CBooleanBuilder * CPBooleanBuilder
+ctypedef CInt32Builder * CPInt32Builder
+ctypedef CInt64Builder * CPInt64Builder
+ctypedef CFloatBuilder * CPFloatBuilder
+ctypedef CDoubleBuilder * CPDoubleBuilder
+
+ctypedef CStructBuilder * CPStructBuilder
+ctypedef CListBuilder * CPListBuilder

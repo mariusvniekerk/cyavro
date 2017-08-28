@@ -41,8 +41,6 @@ from cython.view cimport array as cvarray
 from cython.operator cimport dereference as deref
 from libcpp.cast cimport static_cast, dynamic_cast, const_cast
 from libc.stdlib cimport malloc, free
-import numpy as np
-cimport numpy as np
 
 import pyarrow
 cimport pyarrow
@@ -281,7 +279,7 @@ cdef class AvroArrowReader(object):
 
         cdef unique_ptr[CArrayBuilder] builder
         cdef CMemoryPool* pool = c_get_memory_pool()
-        MakeBuilder(pool, self.arrow_schema.sp_type, &builder)
+        cdef CStatus status = MakeBuilder(pool, self.arrow_schema.sp_type, &builder)
 
         # Get avro reader schema from the file
         wschema = avro_file_reader_get_writer_schema(filereader)
@@ -293,7 +291,7 @@ cdef class AvroArrowReader(object):
             if rval != 0:
                 break
             # decompose record into Python types
-            read_record(record, shared_ptr[CArrayBuilder](builder))
+            status = read_record(record, make_shared[CArrayBuilder](builder))
             avro_value_reset(&record)
             counter += 1
             if counter == self.chunk_size:
@@ -301,7 +299,7 @@ cdef class AvroArrowReader(object):
 
         # builder finish
         cdef shared_ptr[CArray] out;
-        deref(builder).Finish(out)
+        dynamic_cast[CPStructBuilder](builder.get()).Finish(&out)
         cdef pyarrow.lib.Array result
         result = pyarrow.lib.StructArray()
         result.init(out)
@@ -345,7 +343,7 @@ cdef CStatus read_record(const avro_value_t val, shared_ptr[CArrayBuilder]& buil
         CStatus result
 
     container_length = builder.get().num_children()
-    (<CStructBuilder> builder).Append(True)
+    dynamic_cast[CPStructBuilder](builder.get()).Append(True)
     for i in range(container_length):
         avro_value_get_by_index(&val, i, &child, NULL)
         avro_type = avro_value_get_type(&child)
@@ -366,8 +364,7 @@ cdef CStatus read_string(const avro_value_t val, shared_ptr[CArrayBuilder]& buil
         const char* c_str = NULL
         list l
     avro_value_get_string(&val, &c_str, &strlen)
-    cdef CStringBuilder tbuilder = (<CStringBuilder> builder)
-    return tbuilder.Append(<c_string>c_str)
+    return dynamic_cast[CPStringBuilder](builder.get()).Append(<c_string>c_str)
 
 
 cdef CStatus read_bytes(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
@@ -377,7 +374,7 @@ cdef CStatus read_bytes(const avro_value_t val, shared_ptr[CArrayBuilder]& build
         list l
         bytes py_bytes
     avro_value_get_bytes(&val, <const void**> &c_str, &strlen)
-    return (<CBinaryBuilder> builder).Append(<c_string> c_str)
+    return  dynamic_cast[CPBinaryBuilder](builder.get()).Append(<c_string> c_str)
 
 
 cdef CStatus read_fixed(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
@@ -387,7 +384,7 @@ cdef CStatus read_fixed(const avro_value_t val, shared_ptr[CArrayBuilder]& build
         list l
         bytes py_bytes
     avro_value_get_fixed(&val,  <const void**> &c_str, &strlen)
-    return (<CFixedSizeBinaryBuilder> (builder.get())).Append(c_str, strlen)
+    return dynamic_cast[CPFixedSizeBinaryBuilder](builder.get()).Append(c_str, strlen)
 
 
 # numpy primitive read functions.  These all write to ndarrays.
@@ -395,33 +392,34 @@ cdef CStatus read_fixed(const avro_value_t val, shared_ptr[CArrayBuilder]& build
 cdef CStatus read_int32(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int32_t out
     avro_value_get_int(&val, &out)
-    return (<CInt32Builder> builder.get()).Append(out)
+    return dynamic_cast[CPInt32Builder](builder.get()).Append(out)
 
 
 cdef CStatus read_int64(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int64_t out
     avro_value_get_long(&val, &out)
-    return (<CInt64Builder> builder.get()).Append(out)
+    return dynamic_cast[CPInt64Builder](builder.get()).Append(out)
 
 
-cdef CStatus read_float64(const avro_value_t val, shared_ptr[CArrayBuilder] builder):
+# THIS particular function works
+cdef CStatus read_float64(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef double out
     avro_value_get_double(&val, &out)
-    cdef CDoubleBuilder tbuilder = dynamic_cast[CDoubleBuilder](deref(builder))
+    cdef CDoubleBuilder* tbuilder = dynamic_cast[CPDoubleBuilder](builder.get())
     return tbuilder.Append(<const double> out)
 
 
 cdef CStatus read_float32(avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef float out
     avro_value_get_float(&val, &out)
-    return (<CFloatBuilder> builder.get()).Append(out)
+    return dynamic_cast[CPFloatBuilder](builder.get()).Append(out)
 
 
 cdef CStatus read_bool(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int32_t out
     cdef int temp
     avro_value_get_boolean(&val, &temp)
-    return (<CBooleanBuilder> builder.get()).Append(out)
+    return dynamic_cast[CPBooleanBuilder](builder.get()).Append(out)
 
 
 cdef CStatus read_enum(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
@@ -433,7 +431,7 @@ cdef CStatus read_enum(const avro_value_t val, shared_ptr[CArrayBuilder]& builde
     return CStatus_Invalid()
 
 cdef CStatus read_null(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
-    return (<CNullBuilder> builder).AppendNull()
+    return dynamic_cast[CPNullBuilder](builder.get()).AppendNull()
 
 # Read methods for union types.
 
