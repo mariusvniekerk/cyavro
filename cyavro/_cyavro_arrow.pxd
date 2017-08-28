@@ -26,6 +26,8 @@ cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
 
     cdef cppclass CArrayBuilder" arrow::ArrayBuilder":
 
+    # const std::shared_ptr<DataType>& type, MemoryPool* pool)
+
         CArrayBuilder* child(int i)
         int num_children()
 
@@ -102,7 +104,7 @@ cdef extern from "arrow/io/interfaces.h" namespace "arrow::buider":
         CStatus Append(const c_string& value)
         CStatus AppendNull()
 
-    cdef cppclass CStructBuilder" arrow::CStructBuilder"(CArrayBuilder):
+    cdef cppclass CStructBuilder" arrow::StructBuilder"(CArrayBuilder):
         CStatus AppendNull()
         CStatus Append(c_bool isvalid)
 

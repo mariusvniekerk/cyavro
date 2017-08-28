@@ -455,7 +455,7 @@ cdef read_bytes(const avro_value_t val, list subcontainer, size_t row):
         const char* c_string = NULL
         list l
         bytes py_bytes
-    avro_value_get_bytes(&val, <void**> &c_string, &strlen)
+    avro_value_get_bytes(&val, <const void**> &c_string, &strlen)
     py_bytes = c_string
     if subcontainer is not None:
         l = subcontainer
@@ -470,7 +470,7 @@ cdef read_fixed(const avro_value_t val, list subcontainer, size_t row):
         const char* c_string = NULL
         list l
         bytes py_bytes
-    avro_value_get_fixed(&val,  <void**> &c_string, &strlen)
+    avro_value_get_fixed(&val,  <const void**> &c_string, &strlen)
     py_bytes = c_string[:strlen]
     if subcontainer is not None:
         l = subcontainer
@@ -975,14 +975,14 @@ cdef void write_bytes(avro_value_t field, void * array, Py_ssize_t offset, objec
     cdef void** view = <void**> array
     cdef object stringobj = <object> view[offset]
     cdef bytes py_byte_string = stringobj
-    cdef const char *c_string = py_byte_string
+    cdef char *c_string = py_byte_string
     avro_value_set_bytes(&field, c_string, len(py_byte_string))
 
 cdef void write_fixed(avro_value_t field, void * array, Py_ssize_t offset, object schema_type):
     cdef void** view = <void**> array
     cdef object stringobj = <object> view[offset]
     cdef bytes py_byte_string = stringobj
-    cdef const char *c_string = py_byte_string
+    cdef char *c_string = py_byte_string
     avro_value_set_fixed(&field, c_string, len(py_byte_string))
 
 
@@ -1190,7 +1190,7 @@ cdef write_generic_pyval(avro_value_t field, object val, object schema_type):
         elif schema_type == 'bytes':
             py_byte_string = val
             c_string = py_byte_string
-            avro_value_set_bytes(&field, c_string, len(py_byte_string))
+            avro_value_set_bytes(&field, <void *> c_string, len(py_byte_string))
         elif (schema_type == 'bool') or (schema_type == 'boolean'):
             val_boolean = int(val)
             avro_value_set_boolean(&field, val_boolean)
@@ -1246,7 +1246,7 @@ cdef write_generic_pyval(avro_value_t field, object val, object schema_type):
             print(repr(val), type(val))
             py_byte_string = val
             c_string = py_byte_string
-            avro_value_set_fixed(&field, c_string, len(py_byte_string))
+            avro_value_set_fixed(&field, <void *> c_string, len(py_byte_string))
         else:
             raise NotImplementedError('Unknown compound {0!r}'.format(schema_type))
     else:

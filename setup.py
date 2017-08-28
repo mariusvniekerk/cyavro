@@ -61,6 +61,7 @@ extensions = [
         include_dirs=include_dirs,
         library_dirs=library_dirs,
         libraries=['avro', 'm', 'snappy', 'arrow'],
+        extra_compile_args=["-w"],
     ),
     Extension(
         name='cyavro.test_utils',

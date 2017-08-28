@@ -39,6 +39,7 @@ embedsignature allows docstrings to propogate to Python.
 from __future__ import absolute_import
 from cython.view cimport array as cvarray
 from cython.operator cimport dereference as deref
+from libcpp.cast cimport static_cast, dynamic_cast, const_cast
 from libc.stdlib cimport malloc, free
 import numpy as np
 cimport numpy as np
@@ -49,6 +50,7 @@ import pyarrow.lib
 cimport pyarrow.lib
 
 from libc.stdint cimport int32_t, int64_t
+
 from ._cyavro import *
 from ._cavro cimport *
 from ._cyavro_arrow cimport *
@@ -291,7 +293,7 @@ cdef class AvroArrowReader(object):
             if rval != 0:
                 break
             # decompose record into Python types
-            read_record(record, deref(builder))
+            read_record(record, shared_ptr[CArrayBuilder](builder))
             avro_value_reset(&record)
             counter += 1
             if counter == self.chunk_size:
@@ -319,7 +321,7 @@ cdef arrow_reader_from_bytes_c(void *buffer, int length):
     return reader
 
 
-cdef CStatus read_record(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_record(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     """Main read function for the root level record type.
 
     Dispatches to the correct reader function for each of the fields in the record.
@@ -339,16 +341,16 @@ cdef CStatus read_record(const avro_value_t val, CArrayBuilder builder):
         np.ndarray subcontainerarray
         avro_type_t avro_type
         avro_value_t child
-        CArrayBuilder* child_builder
+        shared_ptr[CArrayBuilder] child_builder
         CStatus result
 
-    container_length = builder.num_children()
+    container_length = builder.get().num_children()
     (<CStructBuilder> builder).Append(True)
     for i in range(container_length):
         avro_value_get_by_index(&val, i, &child, NULL)
         avro_type = avro_value_get_type(&child)
-        child_builder = builder.child(i)
-        result = generic_read(child, deref(child_builder))
+        child_builder.reset(builder.get().child(i))
+        result = generic_read(child, child_builder)
     return result
 
 # Primitive read functions.  These all take the same basic form
@@ -358,7 +360,7 @@ cdef CStatus read_record(const avro_value_t val, CArrayBuilder builder):
 # * assign that read value to the subcontainer if present
 # * return the value.
 
-cdef CStatus read_string(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_string(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef:
         size_t strlen
         const char* c_str = NULL
@@ -368,61 +370,61 @@ cdef CStatus read_string(const avro_value_t val, CArrayBuilder builder):
     return tbuilder.Append(<c_string>c_str)
 
 
-cdef CStatus read_bytes(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_bytes(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef:
         size_t strlen
         const char* c_str = NULL
         list l
         bytes py_bytes
-    avro_value_get_bytes(&val, <void**> &c_str, &strlen)
+    avro_value_get_bytes(&val, <const void**> &c_str, &strlen)
     return (<CBinaryBuilder> builder).Append(<c_string> c_str)
 
 
-cdef CStatus read_fixed(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_fixed(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef:
         size_t strlen
         const char* c_str = NULL
         list l
         bytes py_bytes
-    avro_value_get_fixed(&val,  <void**> &c_str, &strlen)
-    cdef CFixedSizeBinaryBuilder tbuilder = (<CFixedSizeBinaryBuilder> builder)
-    return tbuilder.Append(c_str, strlen)
+    avro_value_get_fixed(&val,  <const void**> &c_str, &strlen)
+    return (<CFixedSizeBinaryBuilder> (builder.get())).Append(c_str, strlen)
 
 
 # numpy primitive read functions.  These all write to ndarrays.
 
-cdef CStatus read_int32(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_int32(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int32_t out
     avro_value_get_int(&val, &out)
-    return (<CInt32Builder> builder).Append(out)
+    return (<CInt32Builder> builder.get()).Append(out)
 
 
-cdef CStatus read_int64(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_int64(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int64_t out
     avro_value_get_long(&val, &out)
-    return (<CInt64Builder> builder).Append(out)
+    return (<CInt64Builder> builder.get()).Append(out)
 
 
-cdef CStatus read_float64(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_float64(const avro_value_t val, shared_ptr[CArrayBuilder] builder):
     cdef double out
     avro_value_get_double(&val, &out)
-    return (<CDoubleBuilder> builder).Append(out)
+    cdef CDoubleBuilder tbuilder = dynamic_cast[CDoubleBuilder](deref(builder))
+    return tbuilder.Append(<const double> out)
 
 
-cdef CStatus read_float32(avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_float32(avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef float out
     avro_value_get_float(&val, &out)
-    return (<CFloatBuilder> builder).Append(out)
+    return (<CFloatBuilder> builder.get()).Append(out)
 
 
-cdef CStatus read_bool(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_bool(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef int32_t out
     cdef int temp
     avro_value_get_boolean(&val, &temp)
-    return (<CBooleanBuilder> builder).Append(out)
+    return (<CBooleanBuilder> builder.get()).Append(out)
 
 
-cdef CStatus read_enum(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_enum(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     # TODO
     cdef int32_t out
     cdef int temp
@@ -430,19 +432,18 @@ cdef CStatus read_enum(const avro_value_t val, CArrayBuilder builder):
     out = temp
     return CStatus_Invalid()
 
-
-cdef CStatus read_null(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_null(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     return (<CNullBuilder> builder).AppendNull()
 
 # Read methods for union types.
 
-cdef CStatus read_union(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_union(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     """Unions are only supported for [null, something types]"""
     cdef avro_value_t child
     avro_value_get_current_branch(&val, &child)
     if avro_value_get_type(&val) == AVRO_NULL:
         # TODO figure out how to cast + append properly
-        builder
+        pass
     else:
         return generic_read(child, builder)
 
@@ -454,7 +455,7 @@ cdef CStatus read_union(const avro_value_t val, CArrayBuilder builder):
 # * assign that read value to the container
 # * return the container.
 
-cdef CStatus read_map(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_map(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     """For map types the value of an avro_value_t is similar to a record.
 
     These are fetched one at a time since maps are stored as an ordered list of values.
@@ -480,27 +481,27 @@ cdef CStatus read_map_elem(const avro_value_t val, size_t i):
     return CStatus_Invalid()
 
 
-cdef CStatus read_array(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus read_array(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     cdef:
         size_t actual_size
         size_t i
         const char* map_key = NULL
         avro_value_t child
-        CArrayBuilder* child_builder
+        shared_ptr[CArrayBuilder] child_builder
         CStatus result
 
     avro_value_get_size(&val, &actual_size)
 
-    (<CListBuilder>(builder)).Append(True)
-    child_builder = builder.child(0)
+    (<CListBuilder> builder.get()).Append(True)
+    child_builder.reset(builder.get().child(0))
     for i in range(actual_size):
         avro_value_get_by_index(&val, i,  &child, &map_key)
-        result = generic_read(child, deref(child_builder))
+        result = generic_read(child, child_builder)
 
     return result
 
 
-cdef CStatus generic_read(const avro_value_t val, CArrayBuilder builder):
+cdef CStatus generic_read(const avro_value_t val, shared_ptr[CArrayBuilder]& builder):
     """Generic avro type read dispatcher. Dispatches to the various specializations by AVRO_TYPE.
 
     This is used by the various readers for complex types"""
@@ -543,7 +544,7 @@ cdef pyarrow.lib.DataType get_arrow_type(avro_schema_t schema):
         avro_schema_t child
         size_t size, idx
         int64_t length
-        char * name
+        const char * name
 
     avro_type = schema.type
     if avro_type == AVRO_INT32:
